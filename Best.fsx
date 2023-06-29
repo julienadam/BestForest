@@ -1,4 +1,8 @@
-﻿open System
+﻿#time
+#r "nuget: FSharp.Collections.ParallelSeq"
+
+open FSharp.Collections.ParallelSeq
+open System
 open System.IO
 
 let loadIntArray filename =
@@ -156,14 +160,19 @@ let scoreMap (trees:string[,]) =
     )
     |> Seq.sum
 
-let firstCandidateMap = 
-    terrainSupportMap 
-    |> Array2D.map (fun candidates -> 
-        match candidates with 
-        | [] -> "NA" 
-        | a::_ -> a)
+let rnd = new Random();
 
-let score = firstCandidateMap |> scoreMap
+let generateMap input =
+    input |> Array2D.map (fun candidates -> 
+        match candidates with
+        | [] -> "NA"
+        | _ -> candidates.[rnd.Next(0, candidates.Length - 1)]
+    )
+
+let generateMaps quantity input =  seq {
+    for _ = 0 to quantity - 1 do
+        yield generateMap input
+}
 
 let formatMap (map:string[,] ) =
     let sb = new System.Text.StringBuilder()
@@ -175,4 +184,34 @@ let formatMap (map:string[,] ) =
         sb.AppendLine() |> ignore
     sb.ToString()
 
-File.WriteAllText(@"c:\temp\map.txt", firstCandidateMap |> formatMap)
+let rec mutate map =
+    let i = rnd.Next(0, (map |> Array2D.length1) - 1)
+    let j = rnd.Next(0, (map |> Array2D.length2) - 1)
+    if terrainSupportMap.[i,j].Length > 1 then
+        let existing:string = map.[i,j]
+        let others = 
+            terrainSupportMap.[i,j] 
+            |> List.filter(fun a -> not(a = existing))
+        let nextCandidate = others.[rnd.Next(0, others.Length - 1)]
+        Array2D.set map i j nextCandidate
+        map
+    else
+        mutate map
+
+let findBest seed iterations = 
+    let mutable current = seed
+    let mutable bestScore = seed |> scoreMap
+
+    for _ = 0 to iterations do 
+        let mutant = mutate current
+        let score = mutant |> scoreMap
+        if score > bestScore then
+            printfn "found best map with score : %i" score
+            printfn "%s" (formatMap mutant)
+            bestScore <- score
+            current <- current
+
+findBest (generateMap terrainSupportMap) 1000000
+
+
+//File.WriteAllText(@"c:\temp\map.txt", bestMap |> formatMap)
