@@ -5,6 +5,10 @@ open FSharp.Collections.ParallelSeq
 open System
 open System.IO
 
+type Terrain = | T1 | T2
+
+let terrain = T2
+
 let loadIntArray filename =
     let lines = File.ReadAllLines(filename)
     lines 
@@ -14,19 +18,11 @@ let loadIntArray filename =
 let root = __SOURCE_DIRECTORY__
 let inline (@@) (a:string) (b:string) = Path.Combine(a, b)
 
-let getPath fn = (root @@ "data" @@ "terrain1" @@ fn)
-
-let windMap = loadIntArray (getPath "vent-5-12.txt")
-let humMap = loadIntArray (getPath "humidite-5-12.txt")
-let sunMap = loadIntArray (getPath "ensoleillement-5-12.txt")
-
 type Cell = {
     sun : int
     humidity : int
     wind : int
 }
-
-let terrainBiome = Array2D.init (Array2D.length1 windMap) (Array2D.length2 windMap) (fun x y -> { sun = sunMap.[x,y]; humidity = humMap.[x,y]; wind = windMap.[x,y]})
 
 type StepLimits = {
     sun : int
@@ -77,7 +73,29 @@ let loadCatalog filename : Map<string, TreeDef> =
         )
     |> Map.ofSeq
 
-let catalog = loadCatalog (getPath "catalogue-4.txt")
+
+let LoadTerrain1 () = 
+    let getPath fn = (root @@ "data" @@ "terrain1" @@ fn)
+    let windMap = loadIntArray (getPath "vent-5-12.txt")
+    let humMap = loadIntArray (getPath "humidite-5-12.txt")
+    let sunMap = loadIntArray (getPath "ensoleillement-5-12.txt")
+    let cat = loadCatalog (getPath "catalogue-4.txt")
+    let biome = Array2D.init (Array2D.length1 windMap) (Array2D.length2 windMap) (fun x y -> { sun = sunMap.[x,y]; humidity = humMap.[x,y]; wind = windMap.[x,y]})
+    biome, cat
+
+let LoadTerrain2 () = 
+    let getPath fn = (root @@ "data" @@ "terrain2" @@ fn)
+    let windMap = loadIntArray (getPath "vent-50-100.txt")
+    let humMap = loadIntArray (getPath "humidite-50-100.txt")
+    let sunMap = loadIntArray (getPath "ensoleillement-50-100.txt")
+    let cat = loadCatalog (getPath "catalogue-17.txt")
+    let biome = Array2D.init (Array2D.length1 windMap) (Array2D.length2 windMap) (fun x y -> { sun = sunMap.[x,y]; humidity = humMap.[x,y]; wind = windMap.[x,y]})
+    biome, cat
+
+let terrainBiome, catalog = 
+    match terrain with 
+    | T1 -> LoadTerrain1 ()
+    | T2 -> LoadTerrain2 ()
 
 let terrainSupportMap =
     terrainBiome |> Array2D.map(
@@ -162,17 +180,22 @@ let scoreMap (trees:string[,]) =
 
 let rnd = new Random();
 
-let generateMap input =
+let generateRandomMap input =
     input |> Array2D.map (fun candidates -> 
         match candidates with
         | [] -> "NA"
         | _ -> candidates.[rnd.Next(0, candidates.Length - 1)]
     )
 
-let generateMaps quantity input =  seq {
-    for _ = 0 to quantity - 1 do
-        yield generateMap input
-}
+let generateFavoringASpecificTree tree input =
+    input |> Array2D.map (fun candidates -> 
+        if candidates |> List.contains tree then
+            tree
+        else
+            match candidates with
+            | [] -> "NA"
+            | _ -> candidates.[rnd.Next(0, candidates.Length - 1)]
+    )
 
 let formatMap (map:string[,] ) =
     let sb = new System.Text.StringBuilder()
@@ -198,20 +221,48 @@ let rec mutate map =
     else
         mutate map
 
-let findBest seed iterations = 
+let findBest seed iterations track outputDir = 
     let mutable current = seed
     let mutable bestScore = seed |> scoreMap
 
-    for _ = 0 to iterations do 
-        let mutant = mutate current
+    for iteration = 0 to iterations do 
+        let mutant = current |> mutate
         let score = mutant |> scoreMap
         if score > bestScore then
-            printfn "found best map with score : %i" score
-            printfn "%s" (formatMap mutant)
+            printfn "found best map with score : %i on track %i at iteration %i" score track iteration
+            let fn = outputDir @@ (sprintf "%i.txt" track)
+            File.WriteAllText(fn, mutant |> formatMap)
             bestScore <- score
             current <- current
 
-findBest (generateMap terrainSupportMap) 1000000
+    bestScore
 
+let outputDir = @"c:\temp\maps"
 
-//File.WriteAllText(@"c:\temp\map.txt", bestMap |> formatMap)
+let loadTreeMapFromFile filename =
+    let lines = File.ReadAllLines(outputDir @@ filename)
+    lines
+    |> Array.map (fun l -> l.Split(' '))
+    |> array2D
+
+let loadAndMassMutate track mutations =
+    let fn = outputDir @@ (sprintf "%i.txt" track)
+    File.Copy(fn, Path.ChangeExtension(fn, ".bak"), true) |> ignore
+    let mutable map = loadTreeMapFromFile fn
+    for _ = 1 to mutations do
+        map <- mutate map
+    map
+
+[1..8]
+|> PSeq.iter (fun i ->
+    for _ = 1 to 10000 do
+        let bestFromTrack = loadAndMassMutate i 10
+        let before = scoreMap bestFromTrack
+        let after = findBest bestFromTrack 3000 i outputDir
+        printfn "Track %i : Best score after 3000 mutations : %i compared to previous %i" i after before
+
+        if before > after then
+            printfn "Reverting"
+            let fn = outputDir @@ (sprintf "%i.txt" i)
+            File.Copy(fn, Path.ChangeExtension(fn, ".txt"), true) |> ignore
+)
