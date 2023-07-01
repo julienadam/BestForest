@@ -10,21 +10,23 @@ let rnd = new Random();
 
 let mutable populated = 0
 
-let rec populate (input:string option[,]) (processingStack:System.Collections.Generic.Stack<int * int>) =
+let rec populate (input:string option[,]) (processingStack:System.Collections.Generic.Stack<int * int>) updateStatus =
+    updateStatus processingStack.Count
+
     if processingStack.Count = 0 then
         input |> Array2D.map (fun x -> match x with | None -> failwithf "Should be set" | Some a -> a)
     else
         let i, j = processingStack.Pop()
         if input[i,j].IsSome then
-            populate input processingStack
+            populate input processingStack updateStatus
         else
             let candidates = terrainSupportMap[i,j]
             match candidates with
-            | [] -> populate input processingStack
+            | [] -> populate input processingStack updateStatus
             | [a] ->
                 Array2D.set input i j (Some a)
                 populated <- populated + 1
-                populate input processingStack
+                populate input processingStack updateStatus
             | x ->
                 // compute score for all options, keep the best one
                 let bestOption = x |> Seq.maxBy (fun candidate ->
@@ -39,7 +41,7 @@ let rec populate (input:string option[,]) (processingStack:System.Collections.Ge
                 |> Seq.filter (fun (_,_,v) -> v.IsNone)
                 |> Seq.iter (fun (r,c,_) -> processingStack.Push(r,c))
 
-                populate input processingStack
+                populate input processingStack updateStatus
 
 
 let initmap () =
@@ -60,10 +62,18 @@ let stack, initialMap = initmap()
 printfn "Initial stack size %i" stack.Count
 stack.Push(10,10)
 
-let finalMap = populate initialMap stack
-finalMap |> renderMap
+open Spectre.Console
 
-printfn "Total populated %i" populated
+let status = AnsiConsole.Progress()
+status.Start(fun ctx -> 
+    let max = float (stack.Count)
+    let task = ctx.AddTask("Plantation en cours...", true, max)
+    let finalMap = populate initialMap stack (fun st -> 
+        task.Value <- max - (float) st;
+        ctx.Refresh();
+    )
+    finalMap |> renderMap
+);
 
 (*
 
