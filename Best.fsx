@@ -18,10 +18,8 @@ let generateRandomMap input =
         | _ -> candidates.[rnd.Next(0, candidates.Length - 1)]
     )
 
-/// Tries to modify a single random tree until it manages to do so
-let rec mutate map =
-    let i = rnd.Next(0, (map |> Array2D.length1) - 1)
-    let j = rnd.Next(0, (map |> Array2D.length2) - 1)
+/// Modifies a single cell at random (if possible)
+let mutateCell (map:string[,]) i j =
     if terrainSupportMap.[i,j].Length > 1 then
         let existing:string = map.[i,j]
         let others = 
@@ -29,43 +27,65 @@ let rec mutate map =
             |> List.filter(fun a -> not(a = existing))
         let nextCandidate = others.[rnd.Next(0, others.Length - 1)]
         Array2D.set map i j nextCandidate
+        true
+    else
+        false
+
+/// Tries to modify a single random tree until it manages to do so
+let rec mutate map =
+    let i = rnd.Next(0, (map |> Array2D.length1) - 1)
+    let j = rnd.Next(0, (map |> Array2D.length2) - 1)
+    if mutateCell map i j then
         map
     else
         mutate map
 
-/// Main algo
-let rec simulatedAnnealing map temp score (refreshTimer:Stopwatch) perturbate refresh =
-    // Refresh the UI if necessary
-    if refreshTimer.Elapsed > refreshFreq then
-        refresh score temp map
-        refreshTimer.Restart()
+/// Tries to mutate a block at random, using the provided block size
+let mutateBloc blockSize map =
+    let i0 = rnd.Next(0, (map |> Array2D.length1) - 1 - (blockSize - 1))
+    let j0 = rnd.Next(0, (map |> Array2D.length2) - 1 - (blockSize - 1))
+    for i = 0 to blockSize - 1 do
+        for j = 0 to blockSize - 1 do
+            mutateCell map (i0 + i) (j0 + j) |> ignore
+    map
 
-    // TODO: store the change and revert it instead of copying the whole array for backup
-    let oldMap = map |> Array2D.copy
-    let mutable newMap = perturbate map 
-    let mutable newScore = newMap |> scoreMap
-    let delta = newScore - score
+let simulatedAnnealing map startingTemp perturbate refreshUI =
 
-    // Compute randomizing factors
-    let p = Math.Exp((float delta) / temp)
-    let r = rnd.NextDouble()
+    /// Main algo
+    let rec simulatedAnnealingRec map temp score (refreshTimer:Stopwatch) =
+        // Refresh the UI if necessary
+        if refreshTimer.Elapsed > refreshFreq then
+            refreshUI score temp map
+            refreshTimer.Restart()
 
-    if delta > 0 || r < p then
-       // Solution is accepted
-       ()
-    else
-        // Revert the changes
-        newMap <- oldMap
-        newScore <- score
+        // TODO: store the change and revert it instead of copying the whole array for backup
+        let oldMap = map |> Array2D.copy
+        let mutable newMap = perturbate map 
+        let mutable newScore = newMap |> scoreMap
+        let delta = newScore - score
 
-    // Lower temp
-    let newTemp = temp * 0.99999
-    if newTemp < 0.01 then
-        // Temp has reached minimum, exit
-        newMap, newScore
-    else
-        // Loop again
-        simulatedAnnealing newMap newTemp newScore refreshTimer perturbate refresh
+        // Compute randomizing factors
+        let p = Math.Exp((float delta) / temp)
+        let r = rnd.NextDouble()
+
+        if delta > 0 || r < p then
+           // Solution is accepted
+           ()
+        else
+            // Revert the changes
+            newMap <- oldMap
+            newScore <- score
+
+        // Lower temp
+        let newTemp = temp * 0.99999
+        if newTemp < 0.01 then
+            // Temp has reached minimum, exit
+            newMap, newScore
+        else
+            // Loop again
+            simulatedAnnealingRec newMap newTemp newScore refreshTimer
+
+    simulatedAnnealingRec map startingTemp (map |> scoreMap) (Stopwatch.StartNew())
 
 open Spectre.Console
 
@@ -113,10 +133,12 @@ layout["Top"].Update(canvas)
 // Set this close to 1 for maximum variability, and close to 0.01 for minimum variability
 let initialTemp = 0.2
 
-/// Perturbation functions for the simulated annealing algorithm
-/// Initially set to mutate, could be mutate >> mutate if we 
-/// wanted to add more randomness
-let perturbate = mutate >> mutate
+/// Perturbation function for the simulated annealing algorithm
+
+// Single random mutation let perturbate = mutate
+// Double random mutation let perturbate = mutate
+// Random 2x2 block mutation
+let perturbate = (mutateBloc 2)
 
 // Main function
 AnsiConsole.Live(layout).Start(fun ctx ->
@@ -127,7 +149,7 @@ AnsiConsole.Live(layout).Start(fun ctx ->
         File.WriteAllText(fn, map |> formatMap)
         ctx.Refresh()
 
-    let finalMap, finalScore = simulatedAnnealing initial initialTemp (initial |> scoreMap) (Stopwatch.StartNew()) perturbate displayProgress
+    let finalMap, finalScore = simulatedAnnealing initial initialTemp perturbate displayProgress
     updateCanvas finalMap canvas
     printfn "Best score %i" finalScore
 )
