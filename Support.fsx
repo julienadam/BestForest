@@ -1,7 +1,11 @@
 ﻿#r "nuget: Spectre.Console"
+#r "nuget: FSharp.Collections.ParallelSeq"
 
 open System.IO
 open System
+open FSharp.Collections.ParallelSeq
+
+let rnd = new Random();
 
 type Terrain = | T1 | T2
 
@@ -130,51 +134,51 @@ let enumArray2d (array:'a[,]) = seq {
             yield i,j, array.[i,j]
 }
 
-let getScoreMap (trees:string[,]) =
-    trees 
-    |> Array2D.mapi (fun i j t -> 
-        if t = "NA" then 
-            0
-        else
-            let surroundingTrees = trees |> getAdjacent i j
-            let treeDef = catalog.[t]
-            let growthBonus = 
-                surroundingTrees 
-                |> Seq.sumBy(fun (_,_,neighbor) -> 
-                    match treeDef.Interactions |> Map.tryFind neighbor with
-                    | Some bonus -> bonus
-                    | _ -> 0.0)
+let getScoreForCell trees i j treeType =
+    if treeType = "NA" then 
+        0
+    else
+        let surroundingTrees = trees |> getAdjacent i j
+        let treeDef = catalog.[treeType]
+        let growthBonus = 
+            surroundingTrees 
+            |> Seq.sumBy(fun (_,_,neighbor) -> 
+                match treeDef.Interactions |> Map.tryFind neighbor with
+                | Some bonus -> bonus
+                | _ -> 0.0)
 
-            let normalisedBonus = Math.Max(0.0, 1.0 + growthBonus)
-            let biome = terrainBiome.[i,j]
-            if treeDef.Step0_1.IsSupportedOn(biome) then
-                let growthTime = Math.Ceiling((treeDef.Step0_1.growDuration |> float) * normalisedBonus) |> int
+        let normalisedBonus = Math.Max(0.0, 1.0 + growthBonus)
+        let biome = terrainBiome.[i,j]
+        if treeDef.Step0_1.IsSupportedOn(biome) then
+            let growthTime = Math.Ceiling((treeDef.Step0_1.growDuration |> float) * normalisedBonus) |> int
+            let finalGrowthTime = match growthTime with | 0 -> 1 | x -> x
+            let remainingForStep2 = 60 - finalGrowthTime
+            if remainingForStep2 < 0 then
+                0
+            else if treeDef.Step1_2.IsSupportedOn(biome) then
+                let growthTime = Math.Ceiling((treeDef.Step1_2.growDuration |> float) * normalisedBonus) |> int
                 let finalGrowthTime = match growthTime with | 0 -> 1 | x -> x
-                let remainingForStep2 = 60 - finalGrowthTime
-                if remainingForStep2 < 0 then
-                    0
-                else if treeDef.Step1_2.IsSupportedOn(biome) then
-                    let growthTime = Math.Ceiling((treeDef.Step1_2.growDuration |> float) * normalisedBonus) |> int
+                let remainingForStep3 = remainingForStep2 - finalGrowthTime
+                if remainingForStep3 < 0 then
+                    1
+                else if treeDef.Step2_3.IsSupportedOn(biome) then
+                    let growthTime = Math.Ceiling((treeDef.Step2_3.growDuration |> float) * normalisedBonus) |> int
                     let finalGrowthTime = match growthTime with | 0 -> 1 | x -> x
-                    let remainingForStep3 = remainingForStep2 - finalGrowthTime
-                    if remainingForStep3 < 0 then
-                        1
-                    else if treeDef.Step2_3.IsSupportedOn(biome) then
-                        let growthTime = Math.Ceiling((treeDef.Step2_3.growDuration |> float) * normalisedBonus) |> int
-                        let finalGrowthTime = match growthTime with | 0 -> 1 | x -> x
-                        if remainingForStep3 - finalGrowthTime >= 0 then
-                            4
-                        else
-                            2
+                    if remainingForStep3 - finalGrowthTime >= 0 then
+                        4
                     else
                         2
                 else
-                    1
+                    2
             else
-                0
-    )
+                1
+        else
+            0
 
-let scoreMap (trees:string[,]) = getScoreMap trees |> enumArray2d |> Seq.sumBy (fun (_,_,v) -> v)
+let getScoreMap (trees:string[,]) = trees |> Array2D.mapi (getScoreForCell trees)
+
+let getTotalScoreForMap (trees:string[,]) =
+    trees |> enumArray2d |> PSeq.sumBy (fun (i,j,treeType) -> getScoreForCell trees i j treeType)
 
 let formatMap (map:string[,] ) =
     let sb = new System.Text.StringBuilder()
@@ -190,3 +194,64 @@ let loadTreeMapFromFile filename =
     File.ReadAllLines(filename)
     |> Array.map (fun l -> l.Split(' '))
     |> array2D
+
+open Spectre.Console
+
+/// Display the map in a Spectre canvas
+let updateCanvas map (canvas:Canvas) =
+    let scores = getScoreMap map
+    let colorMatcher = function
+        | 0 -> Color.LightSkyBlue1
+        | 1 -> Color.Orange1
+        | 2 -> Color.LightYellow3
+        | 4 -> Color.Green
+        | x -> failwithf "Not a valid score %i" x
+    scores |> Array2D.iteri(fun i j v ->
+        match map[i,j] with
+        | "NA" -> canvas.SetPixel(j, i, Color.Grey) |> ignore
+        | _ -> canvas.SetPixel(j, i, colorMatcher v) |> ignore
+    )
+
+let renderMap (map:string[,] ) =
+    let canvas = new Canvas(map |> Array2D.length2, map |> Array2D.length1)
+    updateCanvas map canvas
+    canvas
+
+/// Initialize a new random map from a known terrain
+let generateRandomMap input =
+    input |> Array2D.map (fun candidates -> 
+        match candidates with
+        | [] -> "NA"
+        | _ -> candidates.[rnd.Next(0, candidates.Length - 1)]
+    )
+
+/// Modifies a single cell at random (if possible)
+let mutateCell (map:string[,]) i j =
+    if terrainSupportMap.[i,j].Length > 1 then
+        let existing:string = map.[i,j]
+        let others = 
+            terrainSupportMap.[i,j] 
+            |> List.filter(fun a -> not(a = existing))
+        let nextCandidate = others.[rnd.Next(0, others.Length - 1)]
+        Array2D.set map i j nextCandidate
+        true
+    else
+        false
+
+/// Tries to modify a single random tree until it manages to do so
+let rec mutate map =
+    let i = rnd.Next(0, (map |> Array2D.length1) - 1)
+    let j = rnd.Next(0, (map |> Array2D.length2) - 1)
+    if mutateCell map i j then
+        map
+    else
+        mutate map
+
+/// Tries to mutate a block at random, using the provided block size
+let mutateBloc blockSize map =
+    let i0 = rnd.Next(0, (map |> Array2D.length1) - 1 - (blockSize - 1))
+    let j0 = rnd.Next(0, (map |> Array2D.length2) - 1 - (blockSize - 1))
+    for i = 0 to blockSize - 1 do
+        for j = 0 to blockSize - 1 do
+            mutateCell map (i0 + i) (j0 + j) |> ignore
+    map
