@@ -6,7 +6,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="Support.fsx" />
     <Content Include="data\terrain1\catalogue-4.txt" />
     <Content Include="data\terrain1\ensoleillement-5-12.txt" />
     <Content Include="data\terrain1\humidite-5-12.txt" />
@@ -15,8 +14,14 @@
     <Content Include="data\terrain2\ensoleillement-50-100.txt" />
     <Content Include="data\terrain2\humidite-50-100.txt" />
     <Content Include="data\terrain2\vent-50-100.txt" />
-    <None Include="Best.fsx" />
+    <Compile Include="Support.fs" />
+    <Compile Include="Best.fs" />
     <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.Collections.ParallelSeq" Version="1.2.0" />
+    <PackageReference Include="Spectre.Console" Version="0.47.0" />
   </ItemGroup>
 
 </Project>

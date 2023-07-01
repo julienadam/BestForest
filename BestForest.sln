@@ -1,0 +1,30 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.4.33103.184
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "BestForest", "BestForest.fsproj", "{02CE2FB6-1E05-4F5E-95BA-8B27DC38CC8B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{79A9CA59-400C-48BC-AE11-2D4BE106A183}"
+	ProjectSection(SolutionItems) = preProject
+		.gitignore = .gitignore
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{02CE2FB6-1E05-4F5E-95BA-8B27DC38CC8B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{02CE2FB6-1E05-4F5E-95BA-8B27DC38CC8B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{02CE2FB6-1E05-4F5E-95BA-8B27DC38CC8B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{02CE2FB6-1E05-4F5E-95BA-8B27DC38CC8B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {70BF4644-40DC-46CB-8932-FC8FC8A9F51E}
+	EndGlobalSection
+EndGlobal
