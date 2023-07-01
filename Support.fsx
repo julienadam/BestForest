@@ -1,4 +1,6 @@
-﻿open System.IO
+﻿#r "nuget: Spectre.Console"
+
+open System.IO
 open System
 
 type Terrain = | T1 | T2
@@ -131,10 +133,9 @@ let enumArray2d (array:'a[,]) = seq {
 let scoreInProgressMap (tress: string option[,]) =
     tress |> Array2D.map (Option.defaultValue "NA")
 
-let scoreMap (trees:string[,]) =
+let getScoreMap (trees:string[,]) =
     trees 
-    |> enumArray2d
-    |> Seq.map (fun (i, j, t) -> 
+    |> Array2D.mapi (fun i j t -> 
         if t = "NA" then 
             0
         else
@@ -175,7 +176,8 @@ let scoreMap (trees:string[,]) =
             else
                 0
     )
-    |> Seq.sum
+
+let scoreMap (trees:string[,]) = getScoreMap trees |> enumArray2d |> Seq.sumBy (fun (_,_,v) -> v)
 
 let formatMap (map:string[,] ) =
     let sb = new System.Text.StringBuilder()
@@ -186,3 +188,21 @@ let formatMap (map:string[,] ) =
                 sb.Append(" ") |> ignore
         sb.AppendLine() |> ignore
     sb.ToString()
+
+open Spectre.Console
+
+let renderMap (map:string[,] ) =
+    let scores = getScoreMap map
+    let canvas = new Canvas(map |> Array2D.length2, map |> Array2D.length1)
+    let colorMatcher = function
+        | 0 -> Color.LightSkyBlue1
+        | 1 -> Color.Orange1
+        | 2 -> Color.LightYellow3
+        | 3 -> Color.Green
+        | _ -> failwithf "Not a valid score"
+    scores |> Array2D.iteri(fun i j v ->
+        match map[i,j] with
+        | "NA" -> canvas.SetPixel(j, i, Color.Grey) |> ignore
+        | _ -> canvas.SetPixel(j, i, colorMatcher v) |> ignore
+    )
+    AnsiConsole.Write(canvas)

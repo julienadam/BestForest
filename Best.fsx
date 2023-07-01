@@ -8,9 +8,11 @@ open Support
 
 let rnd = new Random();
 
+let mutable populated = 0
+
 let rec populate (input:string option[,]) (processingStack:System.Collections.Generic.Stack<int * int>) =
     if processingStack.Count = 0 then
-        input |> Array2D.map Option.get
+        input |> Array2D.map (fun x -> match x with | None -> failwithf "Should be set" | Some a -> a)
     else
         let i, j = processingStack.Pop()
         if input[i,j].IsSome then
@@ -21,6 +23,7 @@ let rec populate (input:string option[,]) (processingStack:System.Collections.Ge
             | [] -> populate input processingStack
             | [a] ->
                 Array2D.set input i j (Some a)
+                populated <- populated + 1
                 populate input processingStack
             | x ->
                 // compute score for all options, keep the best one
@@ -30,10 +33,11 @@ let rec populate (input:string option[,]) (processingStack:System.Collections.Ge
                 )
 
                 Array2D.set input i j (Some bestOption)
+                populated <- populated + 1
                 input 
                 |> getAdjacent i j 
-                |> Seq.filter (fun (r,c,v) -> v.IsNone)
-                |> Seq.iter (fun (r,c,v) -> processingStack.Push(r,c))
+                |> Seq.filter (fun (_,_,v) -> v.IsNone)
+                |> Seq.iter (fun (r,c,_) -> processingStack.Push(r,c))
 
                 populate input processingStack
 
@@ -43,7 +47,9 @@ let initmap () =
     stack, terrainSupportMap |> Array2D.mapi(fun r c candidates -> 
         match candidates with
         | [] -> Some "NA"
-        | [a] -> Some a
+        | [a] -> 
+            stack.Push(r,c)
+            Some a
         | _ -> 
             stack.Push(r,c)
             None
@@ -51,9 +57,16 @@ let initmap () =
 
 
 let stack, initialMap = initmap()
+printfn "Initial stack size %i" stack.Count
 stack.Push(10,10)
 
 let finalMap = populate initialMap stack
+finalMap |> renderMap
+
+printfn "Total populated %i" populated
+
+(*
+
 printfn "Score %i" (scoreMap finalMap)
 
 #r "nuget: FSharp.Collections.ParallelSeq"
@@ -139,3 +152,5 @@ let loadTreeMapFromFile filename =
         else
             failwithf "WTF"
 )
+
+*)
