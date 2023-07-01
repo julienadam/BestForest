@@ -3,85 +3,14 @@
 
 open System
 open System.IO
-open System.Linq
+open System.Diagnostics
 open Support
+
+let refreshFreq = TimeSpan.FromSeconds(1)
 
 let rnd = new Random();
 
-let mutable populated = 0
-
-let rec populate (input:string option[,]) (processingStack:System.Collections.Generic.Stack<int * int>) updateStatus =
-    updateStatus processingStack.Count
-
-    if processingStack.Count = 0 then
-        input |> Array2D.map (fun x -> match x with | None -> failwithf "Should be set" | Some a -> a)
-    else
-        let i, j = processingStack.Pop()
-        if input[i,j].IsSome then
-            populate input processingStack updateStatus
-        else
-            let candidates = terrainSupportMap[i,j]
-            match candidates with
-            | [] -> populate input processingStack updateStatus
-            | [a] ->
-                Array2D.set input i j (Some a)
-                populated <- populated + 1
-                populate input processingStack updateStatus
-            | x ->
-                // compute score for all options, keep the best one
-                let bestOption = x |> Seq.maxBy (fun candidate ->
-                    (Array2D.set input i j (Some candidate))
-                    input |> scoreInProgressMap
-                )
-
-                Array2D.set input i j (Some bestOption)
-                populated <- populated + 1
-                input 
-                |> getAdjacent i j 
-                |> Seq.filter (fun (_,_,v) -> v.IsNone)
-                |> Seq.iter (fun (r,c,_) -> processingStack.Push(r,c))
-
-                populate input processingStack updateStatus
-
-
-let initmap () =
-    let stack = new System.Collections.Generic.Stack<int*int>()
-    stack, terrainSupportMap |> Array2D.mapi(fun r c candidates -> 
-        match candidates with
-        | [] -> Some "NA"
-        | [a] -> 
-            stack.Push(r,c)
-            Some a
-        | _ -> 
-            stack.Push(r,c)
-            None
-    )
-
-
-let stack, initialMap = initmap()
-printfn "Initial stack size %i" stack.Count
-stack.Push(10,10)
-
-open Spectre.Console
-
-let status = AnsiConsole.Progress()
-status.Start(fun ctx -> 
-    let max = float (stack.Count)
-    let task = ctx.AddTask("Plantation en cours...", true, max)
-    let finalMap = populate initialMap stack (fun st -> 
-        task.Value <- max - (float) st;
-        ctx.Refresh();
-    )
-    finalMap |> renderMap
-);
-
-(*
-
-printfn "Score %i" (scoreMap finalMap)
-
-#r "nuget: FSharp.Collections.ParallelSeq"
-open FSharp.Collections.ParallelSeq
-
+/// Initialize a new random map from a known terrain
 let generateRandomMap input =
     input |> Array2D.map (fun candidates -> 
         match candidates with
@@ -89,17 +18,7 @@ let generateRandomMap input =
         | _ -> candidates.[rnd.Next(0, candidates.Length - 1)]
     )
 
-let generateFavoringASpecificTree tree input =
-    input |> Array2D.map (fun candidates -> 
-        if candidates |> List.contains tree then
-            tree
-        else
-            match candidates with
-            | [] -> "NA"
-            | _ -> candidates.[rnd.Next(0, candidates.Length - 1)]
-    )
-
-
+/// Tries to modify a single random tree until it manages to do so
 let rec mutate map =
     let i = rnd.Next(0, (map |> Array2D.length1) - 1)
     let j = rnd.Next(0, (map |> Array2D.length2) - 1)
@@ -114,53 +33,101 @@ let rec mutate map =
     else
         mutate map
 
-let findBest seed iterations = 
-    let mutable current = seed
-    let mutable bestScore = seed |> scoreMap
-    let mutable bestMap = current |> Array2D.copy
+/// Main algo
+let rec simulatedAnnealing map temp score (refreshTimer:Stopwatch) perturbate refresh =
+    // Refresh the UI if necessary
+    if refreshTimer.Elapsed > refreshFreq then
+        refresh score temp map
+        refreshTimer.Restart()
 
-    for _ = 0 to iterations do 
-        let mutant = current |> mutate
-        let score = mutant |> scoreMap
-        if score > bestScore then
-            bestScore <- score
-            bestMap <- mutant |> Array2D.copy
-            current <- mutant
+    // TODO: store the change and revert it instead of copying the whole array for backup
+    let oldMap = map |> Array2D.copy
+    let mutable newMap = perturbate map 
+    let mutable newScore = newMap |> scoreMap
+    let delta = newScore - score
 
-    bestScore, bestMap
+    // Compute randomizing factors
+    let p = Math.Exp((float delta) / temp)
+    let r = rnd.NextDouble()
 
-let outputDir = @"c:\temp\maps"
+    if delta > 0 || r < p then
+       // Solution is accepted
+       ()
+    else
+        // Revert the changes
+        newMap <- oldMap
+        newScore <- score
 
-let loadTreeMapFromFile filename =
-    let lines = File.ReadAllLines(outputDir @@ filename)
-    lines
-    |> Array.map (fun l -> l.Split(' '))
-    |> array2D
+    // Lower temp
+    let newTemp = temp * 0.99999
+    if newTemp < 0.01 then
+        // Temp has reached minimum, exit
+        newMap, newScore
+    else
+        // Loop again
+        simulatedAnnealing newMap newTemp newScore refreshTimer perturbate refresh
 
-[1..8]
-|> PSeq.iter (fun track ->
-    let fn = outputDir @@ (sprintf "%i.txt" track)
-    for run = 1 to 1000000 do
-        let original = loadTreeMapFromFile fn
-        let originalScore = scoreMap original
-        let mutable bestFromTrack = Array2D.copy original
-        let mutations = rnd.Next(5, 40)
-        printfn "Track %i : Starting run %i with %i mutations from score %i" track run mutations originalScore
-        for _ = 1 to mutations do
-            bestFromTrack <- mutate bestFromTrack
+open Spectre.Console
 
-        let afterScore, afterMap = findBest bestFromTrack 3000
-        
-        if afterScore < originalScore then
-            printfn "Track %i : Reverting, score was %i compared to %i" track afterScore originalScore
-            File.WriteAllText(fn, original |> formatMap)
-        else if originalScore = afterScore then
-            printfn "Track %i : No improvement, doing nothing" track
-        else if afterScore > originalScore then
-            printfn "Track %i : Better score %i compared to previous %i" track afterScore originalScore
-            File.WriteAllText(fn, afterMap |> formatMap)
-        else
-            failwithf "WTF"
+// UI stuff
+
+/// Display the map in a Spectre canvas
+let updateCanvas map (canvas:Canvas) =
+    let scores = getScoreMap map
+    let colorMatcher = function
+        | 0 -> Color.LightSkyBlue1
+        | 1 -> Color.Orange1
+        | 2 -> Color.LightYellow3
+        | 4 -> Color.Green
+        | x -> failwithf "Not a valid score %i" x
+    scores |> Array2D.iteri(fun i j v ->
+        match map[i,j] with
+        | "NA" -> canvas.SetPixel(j, i, Color.Grey) |> ignore
+        | _ -> canvas.SetPixel(j, i, colorMatcher v) |> ignore
+    )
+
+let renderMap (map:string[,] ) =
+    let canvas = new Canvas(map |> Array2D.length2, map |> Array2D.length1)
+    updateCanvas map canvas
+    canvas
+
+/// Map file name
+let fn = __SOURCE_DIRECTORY__ @@ "map.txt"
+
+/// The initial map loaded from the map.txt file, or a random map if not found
+let initial = 
+    if File.Exists(fn) then
+        loadTreeMapFromFile fn
+    else
+        generateRandomMap terrainSupportMap
+
+let canvas = renderMap initial
+
+// Create the layout
+let layout = (new Layout("Root")).SplitRows(
+    new Layout("Top"), 
+    (new Layout("Bottom")).SplitColumns(new Layout("Score"), new Layout("Temperature")));
+layout["Top"].MinimumSize <- initial |> Array2D.length1
+layout["Top"].Update(canvas)
+
+// Set this close to 1 for maximum variability, and close to 0.01 for minimum variability
+let initialTemp = 0.2
+
+/// Perturbation functions for the simulated annealing algorithm
+/// Initially set to mutate, could be mutate >> mutate if we 
+/// wanted to add more randomness
+let perturbate = mutate >> mutate
+
+// Main function
+AnsiConsole.Live(layout).Start(fun ctx ->
+    let displayProgress score temp map =
+        updateCanvas map canvas
+        layout["Score"].Update(new Text(sprintf "Score : %i" score)) |> ignore
+        layout["Temperature"].Update(new Text(sprintf "Temp : %f" temp)) |> ignore
+        File.WriteAllText(fn, map |> formatMap)
+        ctx.Refresh()
+
+    let finalMap, finalScore = simulatedAnnealing initial initialTemp (initial |> scoreMap) (Stopwatch.StartNew()) perturbate displayProgress
+    updateCanvas finalMap canvas
+    printfn "Best score %i" finalScore
 )
-
-*)

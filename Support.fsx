@@ -130,9 +130,6 @@ let enumArray2d (array:'a[,]) = seq {
             yield i,j, array.[i,j]
 }
 
-let scoreInProgressMap (tress: string option[,]) =
-    tress |> Array2D.map (Option.defaultValue "NA")
-
 let getScoreMap (trees:string[,]) =
     trees 
     |> Array2D.mapi (fun i j t -> 
@@ -189,20 +186,7 @@ let formatMap (map:string[,] ) =
         sb.AppendLine() |> ignore
     sb.ToString()
 
-open Spectre.Console
-
-let renderMap (map:string[,] ) =
-    let scores = getScoreMap map
-    let canvas = new Canvas(map |> Array2D.length2, map |> Array2D.length1)
-    let colorMatcher = function
-        | 0 -> Color.LightSkyBlue1
-        | 1 -> Color.Orange1
-        | 2 -> Color.LightYellow3
-        | 3 -> Color.Green
-        | _ -> failwithf "Not a valid score"
-    scores |> Array2D.iteri(fun i j v ->
-        match map[i,j] with
-        | "NA" -> canvas.SetPixel(j, i, Color.Grey) |> ignore
-        | _ -> canvas.SetPixel(j, i, colorMatcher v) |> ignore
-    )
-    AnsiConsole.Write(canvas)
+let loadTreeMapFromFile filename =
+    File.ReadAllLines(filename)
+    |> Array.map (fun l -> l.Split(' '))
+    |> array2D
