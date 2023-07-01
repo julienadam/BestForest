@@ -14,6 +14,7 @@
     <Content Include="data\terrain2\ensoleillement-50-100.txt" />
     <Content Include="data\terrain2\humidite-50-100.txt" />
     <Content Include="data\terrain2\vent-50-100.txt" />
+    <Compile Include="Array2DEx.fs" />
     <Compile Include="Support.fs" />
     <Compile Include="Best.fs" />
     <Compile Include="Program.fs" />
