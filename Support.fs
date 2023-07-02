@@ -218,6 +218,23 @@ module Support =
             | [] -> -1
             | _ -> (candidates.[rnd.Next(0, candidates.Length - 1)]).Id
         )
+        
+    // Build a list of mutable cells and the available options
+    let mutableCells = 
+        terrainSupportMap 
+        |> enumArray2d
+        |> Seq.filter(fun (_,_,treeDefs) -> treeDefs.Length > 1)
+        |> Seq.map(fun (i,j,treeDefs) ->i, j, treeDefs |> List.map (fun treeDef -> treeDef.Id) |> List.toArray)
+        |> Seq.toArray
+
+    /// Mutates a single cell, based on the precalculated list of mutable cells
+    let rec mutate (map: int[,]) =
+        let (i, j, allVariants) = mutableCells[rnd.Next(0, mutableCells.Length - 1)]
+        let existing = map.[i,j]
+        let others = allVariants |> Array.filter(fun a -> not(a = existing))
+        let selected = match others with | [|a|] -> a | _ -> others[rnd.Next(0, others.Length - 1)]
+        Array2D.set map i j selected
+        map
 
     /// Modifies a single cell at random (if possible)
     let mutateCell (map:int[,]) i j =
@@ -231,15 +248,6 @@ module Support =
             true
         else
             false
-
-    /// Tries to modify a single random tree until it manages to do so
-    let rec mutate map =
-        let i = rnd.Next(0, (map |> Array2D.length1) - 1)
-        let j = rnd.Next(0, (map |> Array2D.length2) - 1)
-        if mutateCell map i j then
-            map
-        else
-            mutate map
 
     /// Tries to mutate a block at random, using the provided block size
     let mutateBloc blockSize map =
