@@ -121,15 +121,21 @@ module Support =
                 |> Seq.toList
         )
 
-    let getScoreForCell trees i j treeType =
+    // Build a static list of adjacent cells to avoid recalculating them all the time
+    let adjacencyMap = 
+        terrainSupportMap |> Array2D.mapi (fun i j _ ->
+            terrainSupportMap |> getAdjacent i j |> Seq.map (fun (ni, nj, _ ) -> (ni, nj)) |> Seq.toArray
+        )
+
+    let getScoreForCell (trees:int[,]) i j treeType =
         if treeType = -1 then 
             0
         else
             let treeDef = catalog.[treeType]
             let growthBonus = 
-                trees 
-                |> getAdjacent i j 
-                |> Seq.sumBy(fun (_,_,neighbor) -> 
+                adjacencyMap[i,j]
+                |> Seq.sumBy(fun (i,j) -> 
+                    let neighbor = trees.[i,j]
                     if neighbor = -1 then 0.0 else interactionMatrix[treeType, neighbor])
 
             let normalisedBonus = Math.Max(0.0, 1.0 + growthBonus)
