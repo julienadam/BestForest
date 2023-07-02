@@ -40,62 +40,75 @@ module Support =
             cell.wind       >= x.wind
 
     type TreeDef = {
+        Id : int
+        Code : string
         Step0_1 : StepLimits
         Step1_2 : StepLimits
         Step2_3 : StepLimits
-        // TODO change that to a 2D matrix of scores
-        Interactions : Map<string, float>
     }
     with 
         member x.IsSupportedOn(cell:Cell) =
             x.Step0_1.IsSupportedOn(cell)
 
-    let loadCatalog filename : Map<string, TreeDef> =
+    let loadCatalog filename : float[,] * TreeDef[] =
         let readStep (line: string) = 
             let split = line.Split(' ') |> Array.map (fun c -> Int32.Parse(c))
             { sun = split.[0]; humidity = split.[1]; wind = split.[2]; growDuration = split.[3] }
 
-        File.ReadAllLines(filename)
-        |> Array.chunkBySize 5
-        |> Seq.map (fun treeChunks ->
-            let name = treeChunks.[0]
-            let interactions = 
-                treeChunks.[4].Split(' ') 
+        // Load the tree codes in a map, the key is the index of the tree in the catalog
+        // The idea is to manipulate ints instead of strings to speed up processing
+        let codeMapping = 
+            File.ReadAllLines(filename)
+            |> Array.chunkBySize 5
+            |> Seq.mapi (fun idx chunk -> (chunk |> Seq.head), idx)
+            |> Map.ofSeq
+
+        // Build an interaction matrix, so that we can easily find the value without 
+        // going through a hashtable
+        let interactionsMatrix = Array2D.zeroCreate codeMapping.Count codeMapping.Count
+
+        let treeDefinitions = 
+            File.ReadAllLines(filename)
+            |> Array.chunkBySize 5
+            |> Seq.mapi (fun idx treeChunks ->
+                // Fill the interaction matrix for this tree
+                treeChunks.[4].Split(' ')
                 |> Seq.skip 1 
                 |> Seq.chunkBySize 2 
-                |> Seq.map (fun i -> i.[0], Double.Parse(i.[1]))
-                |> Map.ofSeq
-        
-            let treeDesc = { 
-                Step0_1 = readStep treeChunks.[1]
-                Step1_2 = readStep treeChunks.[2]
-                Step2_3 = readStep treeChunks.[3]
-                Interactions = interactions
-            }
-        
-            name, treeDesc
-            )
-        |> Map.ofSeq
+                |> Seq.iter (fun i ->
+                    let otherTreeId = codeMapping.[i.[0]]
+                    Array2D.set interactionsMatrix idx otherTreeId (Double.Parse(i.[1])))
+
+                {
+                    Id = idx
+                    Code = treeChunks.[0]
+                    Step0_1 = readStep treeChunks.[1]
+                    Step1_2 = readStep treeChunks.[2]
+                    Step2_3 = readStep treeChunks.[3]
+                })
+            |> Seq.toArray
+
+        interactionsMatrix, treeDefinitions
 
     let LoadTerrain1 () = 
         let getPath fn = (root @@ "data" @@ "terrain1" @@ fn)
         let windMap = loadIntArray (getPath "vent-5-12.txt")
         let humMap = loadIntArray (getPath "humidite-5-12.txt")
         let sunMap = loadIntArray (getPath "ensoleillement-5-12.txt")
-        let cat = loadCatalog (getPath "catalogue-4.txt")
+        let interactionMatrix, catalog = loadCatalog (getPath "catalogue-4.txt")
         let biome = Array2D.init (Array2D.length1 windMap) (Array2D.length2 windMap) (fun x y -> { sun = sunMap.[x,y]; humidity = humMap.[x,y]; wind = windMap.[x,y]})
-        biome, cat
+        biome, interactionMatrix, catalog
 
     let LoadTerrain2 () = 
         let getPath fn = (root @@ "data" @@ "terrain2" @@ fn)
         let windMap = loadIntArray (getPath "vent-50-100.txt")
         let humMap = loadIntArray (getPath "humidite-50-100.txt")
         let sunMap = loadIntArray (getPath "ensoleillement-50-100.txt")
-        let cat = loadCatalog (getPath "catalogue-17.txt")
+        let interactionMatrix, catalog = loadCatalog (getPath "catalogue-17.txt")
         let biome = Array2D.init (Array2D.length1 windMap) (Array2D.length2 windMap) (fun x y -> { sun = sunMap.[x,y]; humidity = humMap.[x,y]; wind = windMap.[x,y]})
-        biome, cat
+        biome, interactionMatrix, catalog
 
-    let terrainBiome, catalog = 
+    let terrainBiome, interactionMatrix, catalog = 
         match terrain with 
         | T1 -> LoadTerrain1 ()
         | T2 -> LoadTerrain2 ()
@@ -104,24 +117,20 @@ module Support =
         terrainBiome |> Array2D.map(
             fun c -> 
                 catalog 
-                |> Map.toSeq 
-                |> Seq.filter (fun (_, t) -> t.IsSupportedOn(c))
-                |> Seq.map fst
+                |> Seq.filter (fun t -> t.IsSupportedOn(c))
                 |> Seq.toList
         )
 
     let getScoreForCell trees i j treeType =
-        if treeType = "NA" then 
+        if treeType = -1 then 
             0
         else
-            let surroundingTrees = trees |> getAdjacent i j
             let treeDef = catalog.[treeType]
             let growthBonus = 
-                surroundingTrees 
+                trees 
+                |> getAdjacent i j 
                 |> Seq.sumBy(fun (_,_,neighbor) -> 
-                    match treeDef.Interactions |> Map.tryFind neighbor with
-                    | Some bonus -> bonus
-                    | _ -> 0.0)
+                    if neighbor = -1 then 0.0 else interactionMatrix[treeType, neighbor])
 
             let normalisedBonus = Math.Max(0.0, 1.0 + growthBonus)
             let biome = terrainBiome.[i,j]
@@ -151,16 +160,17 @@ module Support =
             else
                 0
 
-    let getScoreMap (trees:string[,]) = trees |> Array2D.mapi (getScoreForCell trees)
+    let getScoreMap (trees:int[,]) = trees |> Array2D.mapi (getScoreForCell trees)
 
-    let getTotalScoreForMap (trees:string[,]) =
+    let getTotalScoreForMap (trees:int[,]) =
         trees |> enumArray2d |> PSeq.sumBy (fun (i,j,treeType) -> getScoreForCell trees i j treeType)
 
-    let formatMap (map:string[,] ) =
+    let formatMap (map:int[,] ) =
         let sb = new System.Text.StringBuilder()
         for i = 0 to (map |> Array2D.length1) - 1 do
             for j = 0 to (map |> Array2D.length2) - 1 do
-                sb.Append(map[i,j]) |> ignore
+                let code = match map[i,j] with | -1 -> "NA" | x -> catalog[x].Code
+                sb.Append(code) |> ignore
                 if j <> (map |> Array2D.length2) - 1 then 
                     sb.Append(" ") |> ignore
             sb.AppendLine() |> ignore
@@ -170,6 +180,8 @@ module Support =
         File.ReadAllLines(filename)
         |> Array.map (fun l -> l.Split(' '))
         |> array2D
+        |> Array2D.map (fun v -> 
+            match v with | "NA" -> -1 | x -> (catalog |> Seq.find (fun c -> c.Code = x)).Id)
 
     open Spectre.Console
 
@@ -184,11 +196,11 @@ module Support =
             | x -> failwithf "Not a valid score %i" x
         scores |> Array2D.iteri(fun i j v ->
             match map[i,j] with
-            | "NA" -> canvas.SetPixel(j, i, Color.Grey) |> ignore
+            | -1 -> canvas.SetPixel(j, i, Color.Grey) |> ignore
             | _ -> canvas.SetPixel(j, i, colorMatcher v) |> ignore
         )
 
-    let renderMap (map:string[,] ) =
+    let renderMap (map:int[,] ) =
         let canvas = new Canvas(map |> Array2D.length2, map |> Array2D.length1)
         updateCanvas map canvas
         canvas
@@ -197,19 +209,19 @@ module Support =
     let generateRandomMap input =
         input |> Array2D.map (fun candidates -> 
             match candidates with
-            | [] -> "NA"
-            | _ -> candidates.[rnd.Next(0, candidates.Length - 1)]
+            | [] -> -1
+            | _ -> (candidates.[rnd.Next(0, candidates.Length - 1)]).Id
         )
 
     /// Modifies a single cell at random (if possible)
-    let mutateCell (map:string[,]) i j =
+    let mutateCell (map:int[,]) i j =
         if terrainSupportMap.[i,j].Length > 1 then
-            let existing:string = map.[i,j]
+            let existing = map.[i,j]
             let others = 
                 terrainSupportMap.[i,j] 
-                |> List.filter(fun a -> not(a = existing))
+                |> List.filter(fun a -> not(a.Id = existing))
             let nextCandidate = others.[rnd.Next(0, others.Length - 1)]
-            Array2D.set map i j nextCandidate
+            Array2D.set map i j nextCandidate.Id
             true
         else
             false
