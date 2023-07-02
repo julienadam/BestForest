@@ -36,7 +36,7 @@ module Best =
                 newScore <- score
 
             // Lower temp
-            let newTemp = temp * 0.99999
+            let newTemp = temp * 0.999999
             if newTemp < 0.01 then
                 // Temp has reached minimum, exit
                 newMap, newScore
